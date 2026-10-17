@@ -1,0 +1,13 @@
+{
+  "name": "Nuestra Boda",
+  "short_name": "Nuestra Boda",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#2C2925",
+  "theme_color": "#2C2925",
+  "icons": [
+    { "src": "icono.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
