@@ -214,6 +214,20 @@
   .srch { margin-top: 18px; }
   .sync { cursor: pointer; padding: 6px 0; }
   a.btn { text-decoration: none; }
+  .hero { position: relative; }
+  .campana { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; color: var(--silver-bright); }
+  .campana:active { background: rgba(243, 240, 233, .1); }
+  .campana-n { position: absolute; top: 5px; right: 3px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--cream); color: var(--graphite); font-family: var(--font-main); font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; }
+  .ai-lista { margin-top: 10px; border-top: 1px solid var(--line); }
+  .ai { display: block; width: 100%; padding: 14px 0; border-bottom: 1px solid var(--line); text-align: left; }
+  .ai-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .ai-top b { font-weight: 400; }
+  .ai.nuevo .ai-top b { font-weight: 600; }
+  .ai.nuevo .ai-top b::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--text); vertical-align: 1px; }
+  .ai-cuando { flex: none; font-size: .78rem; color: var(--muted); }
+  .ai-que { display: block; margin-top: 2px; font-size: .84rem; color: var(--muted); }
+  .ai-msg { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 6px; font-size: .92rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ai.abierto .ai-msg { display: block; -webkit-line-clamp: unset; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 </style>
 </head>
@@ -281,7 +295,7 @@
   function blank() {
     var db = {};
     COLS.forEach(function (c) { db[c] = {}; });
-    return { v: 1, db: db, outbox: {}, me: '', url: '', rev: 0, lastOk: 0, lastErr: '', seeded: false };
+    return { v: 1, db: db, outbox: {}, me: '', url: '', rev: 0, lastOk: 0, lastErr: '', seeded: false, vistos: {} };
   }
   function load() {
     var raws = [];
@@ -352,6 +366,7 @@
     notifyT = setTimeout(function () {
       notifyT = 0;
       listeners.slice().forEach(function (l) { try { l.cb(l.id ? snapDoc(l.c, l.id) : snapCol(l.c)); } catch (e) { console.error(e); } });
+      pintarCampana();
     }, 0);
   }
   function put(c, id, data) {
@@ -466,6 +481,7 @@
   }
   function apply(changes) {
     var changed = false;
+    var llegaron = [];
     (changes || []).forEach(function (c) {
       if (!c || !c.col || !c.id) return;
       if (!ST.db[c.col]) ST.db[c.col] = {};
@@ -476,11 +492,13 @@
       if (local && local.upd === upd) { delete ST.outbox[key]; return; } // ya está igual en la hoja
       var data = c.data;
       if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = {}; } }
+      if (!local && c.col === 'invitados' && !c.del && data && data.origen === 'invitacion') llegaron.push(data);
       ST.db[c.col][c.id] = { id: c.id, col: c.col, upd: upd, del: !!c.del, by: c.by || '', data: data || {} };
       delete ST.outbox[key];
       changed = true;
     });
     if (changed) notify();
+    if (llegaron.length) toastS(llegaron.length === 1 ? llegaron[0].nombre + (llegaron[0].estado === 'no' ? ' respondió que no podrá ir' : ' confirmó') : llegaron.length + ' confirmaciones nuevas');
   }
   function scheduleSync(ms) {
     clearTimeout(syncT);
@@ -510,6 +528,7 @@
       ST.lastErr = '';
       fails = 0;
       syncing = false;
+      vigilar();
       persist();
       refreshUI();
       scheduleSync(Object.keys(ST.outbox).length && changes.length ? 400 : 20000);
@@ -655,7 +674,90 @@
     } else if (a === 'save') connect(sh, el);
     else if (a === 'share') shareLink();
     else if (a === 'sync') syncNow(true).then(function () { var p = document.getElementById('sx-estado'); if (p) p.textContent = estadoTxt(); });
+    else if (a === 'campana') abrirCampana();
+    else if (a === 'ver') verConf(el);
+    else if (a === 'todas') { confs().forEach(function (r) { ST.vistos[r.id] = 1; }); persistSoon(); pintarCampana(); abrirCampana(); }
   });
+
+  /* ---------- Campana: confirmaciones y mensajes sin revisar (cada teléfono lleva su cuenta) ---------- */
+  var CAMPANA = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>';
+  var MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  function confs() {
+    var inv = ST.db.invitados || {};
+    return Object.keys(inv).map(function (id) { return inv[id]; })
+      .filter(function (r) { return !r.del && r.data && r.data.origen === 'invitacion'; })
+      .sort(function (a, b) { return (+b.data.creadoEn || 0) - (+a.data.creadoEn || 0); });
+  }
+  function sinVer() { return confs().filter(function (r) { return !ST.vistos[r.id]; }).length; }
+  function cuando(ms) {
+    ms = +ms;
+    if (!ms) return '';
+    var m = Math.round((now() - ms) / 60000);
+    if (m < 1) return 'ahora';
+    if (m < 60) return 'hace ' + m + ' min';
+    if (m < 1440) return 'hace ' + Math.round(m / 60) + ' h';
+    var d = new Date(ms);
+    return d.getDate() + ' ' + MESES[d.getMonth()];
+  }
+  function pintarCampana() {
+    var hero = document.querySelector('header.hero');
+    if (!hero) return;
+    var b = document.getElementById('campana');
+    if (!b) {
+      b = document.createElement('button');
+      b.id = 'campana';
+      b.className = 'campana';
+      b.setAttribute('data-sx', 'campana');
+      b.innerHTML = CAMPANA + '<span class="campana-n" hidden></span>';
+      hero.appendChild(b);
+    }
+    var n = sinVer();
+    var s = b.querySelector('.campana-n');
+    s.hidden = !n;
+    s.textContent = n > 99 ? '99+' : String(n);
+    b.setAttribute('aria-label', n ? n + (n === 1 ? ' confirmación sin revisar' : ' confirmaciones sin revisar') : 'Confirmaciones');
+    if (!N && navigator.setAppBadge) {
+      try { var pr = n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); if (pr && pr.catch) pr.catch(function () { /* sin permiso */ }); } catch (e) { /* */ }
+    }
+  }
+  function itemConf(r) {
+    var d = r.data;
+    var va = d.estado !== 'no';
+    var n = Math.max(1, +d.personas || 1);
+    return '<button class="ai' + (ST.vistos[r.id] ? '' : ' nuevo') + '" data-sx="ver" data-id="' + esc(r.id) + '"><span class="ai-top"><b>' + esc(d.nombre) + '</b><span class="ai-cuando">' + cuando(d.creadoEn) + '</span></span>' +
+      '<span class="ai-que">' + (va ? 'Confirmó, ' + n + (n === 1 ? ' persona' : ' personas') : 'No podrá ir') + '</span>' +
+      (d.nota ? '<span class="ai-msg">' + esc(d.nota) + '</span>' : '') + '</button>';
+  }
+  function cuentaTxt(n) { return n ? n + ' sin revisar. Toca una para leerla completa.' : 'Todas revisadas.'; }
+  function abrirCampana() {
+    var todas = confs();
+    var n = sinVer();
+    openSx('<h3 class="sh-t">Confirmaciones</h3><p class="sub" id="ai-cuenta">' + cuentaTxt(n) + '</p>' +
+      (n ? '<button class="link" data-sx="todas">Marcar todas como vistas</button>' : '') +
+      '<div class="ai-lista">' + (todas.length ? todas.map(itemConf).join('') : '<p class="sub">Todavía no ha llegado ninguna.</p>') + '</div>');
+  }
+  function verConf(el) {
+    var id = el.getAttribute('data-id');
+    el.classList.toggle('abierto');
+    if (ST.vistos[id]) return;
+    ST.vistos[id] = 1;
+    el.classList.remove('nuevo');
+    persistSoon();
+    pintarCampana();
+    var p = document.getElementById('ai-cuenta');
+    if (p) p.textContent = cuentaTxt(sinVer());
+  }
+  window.abrirCampana = abrirCampana;
+  // En Android, la app le pasa al teléfono lo necesario para revisar la hoja aunque esté cerrada
+  function vigilar() {
+    if (!N || typeof N.vigilar !== 'function' || !ST.url) return;
+    var max = 0;
+    confs().forEach(function (r) { if (+r.data.creadoEn > max) max = +r.data.creadoEn; });
+    native('vigilar', ST.url, ST.key || CLAVE, ST.me || '', String(max));
+  }
+
+  // Escape cierra primero las hojas de la conexión y de la campana
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && layer) { e.stopPropagation(); closeSx(); } }, true);
 
   // Botón atrás de Android: primero cierra lo abierto, luego vuelve a Resumen
   window.appBack = function () {
@@ -668,6 +770,7 @@
 
   window.addEventListener('load', function () {
     refreshUI();
+    pintarCampana();
     if (!ST.me) setTimeout(function () { openConn(true); }, 350);
     else if (ST.url) setTimeout(function () { syncNow(false); }, 500);
   });
